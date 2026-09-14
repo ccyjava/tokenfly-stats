@@ -44,7 +44,28 @@ def merge_dicts(dicts):
     out = {}
     for d in dicts:
         for k, v in (d or {}).items():
-            out[k] = out.get(k, 0) + v
+            cnt = v.get("count", v.get("pv", v)) if isinstance(v, dict) else v
+            out[k] = out.get(k, 0) + cnt
+    return out
+
+
+def merge_cities(dicts):
+    out = {}
+    for d in dicts:
+        for k, v in (d or {}).items():
+            if isinstance(v, dict):
+                e = out.get(k)
+                if not e:
+                    e = {"count": 0, "city": v.get("city", ""), "country": v.get("country", ""),
+                         "cc": v.get("cc", ""), "lat": v.get("lat", 0), "lon": v.get("lon", 0)}
+                    out[k] = e
+                e["count"] += v.get("count", 0)
+                if not e["lat"] and v.get("lat"):
+                    e["lat"], e["lon"] = v["lat"], v["lon"]
+            else:
+                e = out.get(k) or {"count": 0, "city": k, "country": "", "cc": "", "lat": 0, "lon": 0}
+                e["count"] += v
+                out[k] = e
     return out
 
 
@@ -76,7 +97,9 @@ def main():
             "bots": sum(v.get("bots", 0) for v in vals),
             "api": sum(v.get("api", 0) for v in vals),
             "pages": merge_dicts(v.get("pages") for v in vals),
+            "page_uv": merge_dicts(v.get("page_uv") for v in vals),
             "countries": merge_dicts(v.get("countries") for v in vals),
+            "cities": merge_cities(v.get("cities") for v in vals),
             "refs": merge_dicts(v.get("refs") for v in vals),
             "devices": merge_dicts(v.get("devices") for v in vals),
         }
