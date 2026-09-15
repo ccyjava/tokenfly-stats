@@ -76,16 +76,20 @@ def merge_cities(dicts):
     return out
 
 
-def main():
-    key = get_key()
-    snap = fetch_snapshot(key)
-    boot = snap["boot"]
+def apply_snapshot(snap, boots, history):
+    """把一次 snapshot 合并进 history/boots。
+
+    persistent 快照（Turso 模式）：days 是全量累计，直接覆盖对应日期，
+    不按 boot 求和（否则重复计数）；boots 不动。
+    非 persistent：旧逻辑——按 (date, boot) 记累计值，history 为各 boot 求和。
+    """
     days = snap.get("days", {})
+    if snap.get("persistent"):
+        for date, d in days.items():
+            history.setdefault("days", {})[date] = d
+        return history, boots
 
-    boots = json.loads(BOOTS.read_text()) if BOOTS.exists() else {}
-    history = json.loads(HISTORY.read_text()) if HISTORY.exists() else {"days": {}}
-
-    # 更新各 boot 的累计值
+    boot = snap["boot"]
     for date, d in days.items():
         boots.setdefault(date, {})[boot] = d
 
@@ -110,6 +114,18 @@ def main():
             "refs": merge_dicts(v.get("refs") for v in vals),
             "devices": merge_dicts(v.get("devices") for v in vals),
         }
+    return history, boots
+
+
+def main():
+    key = get_key()
+    snap = fetch_snapshot(key)
+    days = snap.get("days", {})
+
+    boots = json.loads(BOOTS.read_text()) if BOOTS.exists() else {}
+    history = json.loads(HISTORY.read_text()) if HISTORY.exists() else {"days": {}}
+
+    history, boots = apply_snapshot(snap, boots, history)
 
     old_h, old_b = HISTORY.read_text(), BOOTS.read_text() if BOOTS.exists() else ""
     new_h = json.dumps(history, ensure_ascii=False, sort_keys=True)
