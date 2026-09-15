@@ -31,20 +31,51 @@ def get_key():
     return m.group(1)
 
 
-def fetch_snapshot(key):
-    url = f"https://tokenfly.ai/api/stats/snapshot?key={key}"
+def _parse_body(raw):
+    j = json.loads(raw.decode())
+    if not j.get("ok"):
+        raise ValueError(f"snapshot not ok: {str(j)[:200]}")
+    return j
+
+
+def _fetch_urllib(url):
+    """urllib 尝试一次。chunked 断流时用 e.partial 尝试解析。"""
     req = urllib.request.Request(url, headers={"User-Agent": "tfstats-sync/1.0"})
     with urllib.request.urlopen(req, timeout=30) as r:
         try:
             raw = r.read()
         except IncompleteRead as e:
             # 服务端（Cloudflare/aiohttp chunked）偶尔提前断流，但已读数据通常完整；
-            # 用已读部分尝试解析，截断了会 json 报错走正常失败路径
+            # 用已读部分尝试解析，解析失败由调用方重试
             raw = e.partial
-        j = json.loads(raw.decode())
-    if not j.get("ok"):
-        sys.exit(f"snapshot not ok: {j}")
-    return j
+    return _parse_body(raw)
+
+
+def _fetch_curl(url):
+    """curl 兜底：对 chunked 提前断流更宽容。"""
+    p = subprocess.run(
+        ["curl", "-sS", "--max-time", "45", "-A", "tfstats-sync/1.0", url],
+        capture_output=True, text=False, timeout=60)
+    if p.returncode != 0:
+        raise RuntimeError(f"curl failed: {p.stderr.decode()[:200]}")
+    return _parse_body(p.stdout)
+
+
+def fetch_snapshot(key):
+    url = f"https://tokenfly.ai/api/stats/snapshot?key={key}"
+    import time
+    last_err = None
+    for attempt in range(4):
+        try:
+            return _fetch_urllib(url)
+        except Exception as e:
+            last_err = e
+            time.sleep(2 + attempt * 3)
+    # urllib 多次失败后用 curl 兜底
+    try:
+        return _fetch_curl(url)
+    except Exception as e:
+        sys.exit(f"snapshot fetch failed after retries: {last_err}; curl: {e}")
 
 
 def merge_dicts(dicts):
