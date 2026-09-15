@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys
 import urllib.request
+from http.client import IncompleteRead
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -34,7 +35,13 @@ def fetch_snapshot(key):
     url = f"https://tokenfly.ai/api/stats/snapshot?key={key}"
     req = urllib.request.Request(url, headers={"User-Agent": "tfstats-sync/1.0"})
     with urllib.request.urlopen(req, timeout=30) as r:
-        j = json.loads(r.read().decode())
+        try:
+            raw = r.read()
+        except IncompleteRead as e:
+            # 服务端（Cloudflare/aiohttp chunked）偶尔提前断流，但已读数据通常完整；
+            # 用已读部分尝试解析，截断了会 json 报错走正常失败路径
+            raw = e.partial
+        j = json.loads(raw.decode())
     if not j.get("ok"):
         sys.exit(f"snapshot not ok: {j}")
     return j
